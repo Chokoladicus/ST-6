@@ -267,5 +267,4 @@ public class Tests {
         ArrayList<Integer> list = new ArrayList<>(Arrays.asList(0, 4, 8));
         Utility.print(list);
     }
-
 }
