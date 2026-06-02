@@ -1,4 +1,5 @@
 target/
+my-app/
 .idea/
 *.iml
 .classpath
