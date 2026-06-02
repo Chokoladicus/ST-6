@@ -69,6 +69,13 @@
         <plugin>
           <artifactId>maven-jar-plugin</artifactId>
           <version>3.4.2</version>
+          <configuration>
+            <archive>
+              <manifest>
+                <mainClass>com.mycompany.app.Program</mainClass>
+              </manifest>
+            </archive>
+          </configuration>
         </plugin>
         <plugin>
           <artifactId>maven-install-plugin</artifactId>
@@ -110,7 +117,7 @@
             </goals>
             <configuration>
               <propertyName>jacocoArgLine</propertyName>
-              <destFile>C:/Users/user/AppData/Local/Temp/my-app-jacoco.exec</destFile>
+              <destFile>${java.io.tmpdir}/my-app-jacoco.exec</destFile>
             </configuration>
           </execution>
           <execution>
@@ -120,7 +127,7 @@
               <goal>report</goal>
             </goals>
             <configuration>
-              <dataFile>C:/Users/user/AppData/Local/Temp/my-app-jacoco.exec</dataFile>
+              <dataFile>${java.io.tmpdir}/my-app-jacoco.exec</dataFile>
             </configuration>
           </execution>
         </executions>
