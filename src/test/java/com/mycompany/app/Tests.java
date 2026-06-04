@@ -1,226 +1,207 @@
 package com.mycompany.app;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.awt.GridLayout;
 import java.lang.reflect.Field;
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import org.junit.Test;
 
 public class Tests {
 
-    private char[] board(char... cells) {
-        char[] snapshot = new char[9];
-        System.arraycopy(cells, 0, snapshot, 0, 9);
-        return snapshot;
+    private static char[] grid(String row0, String row1, String row2) {
+        String flat = row0 + row1 + row2;
+        if (flat.length() != 9) {
+            throw new IllegalArgumentException("grid must have 9 cells");
+        }
+        return flat.toCharArray();
+    }
+
+    private MatchEngine seeded(char lastMark, char[] snapshot) {
+        MatchEngine engine = new MatchEngine();
+        engine.lastPlaced = lastMark;
+        System.arraycopy(snapshot, 0, engine.grid, 0, 9);
+        return engine;
     }
 
     @Test
-    public void freshGameHasEmptyCells() {
-        Game game = new Game();
-        assertEquals(State.PLAYING, game.state);
-        for (char cell : game.board) {
-            assertEquals(' ', cell);
+    public void blankMatchHasNineSpacesAndNoWinnerYet() {
+        MatchEngine engine = new MatchEngine();
+        assertEquals(MatchOutcome.IN_PROGRESS, engine.outcome);
+        assertArrayEquals(grid("   ", "   ", "   "), engine.grid);
+    }
+
+    @Test
+    public void humanSideIsCrossComputerSideIsNought() {
+        MatchEngine engine = new MatchEngine();
+        assertEquals('X', engine.crosses.mark);
+        assertEquals('O', engine.noughts.mark);
+        assertFalse(engine.crosses.mark == engine.noughts.mark);
+    }
+
+    @Test
+    public void topRowCrossesWinAfterThirdMarkInRow() {
+        MatchEngine engine = seeded('X', grid("XXX", "O  ", "  O"));
+        assertEquals(MatchOutcome.CROSSES_WIN, engine.resolveOutcome(engine.grid));
+    }
+
+    @Test
+    public void leftColumnNoughtsWinWhenColumnIsFilled() {
+        MatchEngine engine = seeded('O', grid("O  ", "O X", "O X"));
+        assertEquals(MatchOutcome.NOUGHTS_WIN, engine.resolveOutcome(engine.grid));
+    }
+
+    @Test
+    public void packedGridWithoutLineEndsInStalemate() {
+        MatchEngine engine = seeded('X', grid("OXO", "XXO", "XOX"));
+        assertEquals(MatchOutcome.STALEMATE, engine.resolveOutcome(engine.grid));
+    }
+
+    @Test
+    public void cornerMarksLeaveGameOpen() {
+        MatchEngine engine = seeded('O', grid("X  ", "   ", "  O"));
+        assertEquals(MatchOutcome.IN_PROGRESS, engine.resolveOutcome(engine.grid));
+    }
+
+    @Test
+    public void vacantIndicesExcludeTakenSlots() {
+        MatchEngine engine = new MatchEngine();
+        char[] snapshot = grid("  O", "X X", " O ");
+        List<Integer> free = engine.vacantIndices(snapshot);
+        assertEquals(5, free.size());
+        Set<Integer> blocked = new HashSet<>(Arrays.asList(2, 3, 5, 7));
+        for (Integer slot : blocked) {
+            assertFalse(free.contains(slot));
         }
     }
 
     @Test
-    public void playersStartWithExpectedSymbols() {
-        Game game = new Game();
-        assertEquals('X', game.player1.symbol);
-        assertEquals('O', game.player2.symbol);
+    public void vacantIndicesOnNewGridAreZeroThroughEight() {
+        MatchEngine engine = new MatchEngine();
+        int[] indexes = engine.vacantIndices(engine.grid).stream().mapToInt(Integer::intValue).toArray();
+        assertArrayEquals(new int[] {0, 1, 2, 3, 4, 5, 6, 7, 8}, indexes);
     }
 
     @Test
-    public void detectsHorizontalWinForCrosses() {
-        Game game = new Game();
-        char[] snapshot = board(' ', ' ', ' ', 'X', 'X', 'X', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(State.XWIN, game.checkState(snapshot));
+    public void rateTerminalGivesPlusHundredForOwnDiagonalWin() {
+        MatchEngine engine = seeded('X', grid("X  ", " X ", "  X"));
+        assertEquals(MatchEngine.SCORE_WIN, engine.rateTerminal(engine.grid, 'X'));
     }
 
     @Test
-    public void detectsVerticalWinForNoughts() {
-        Game game = new Game();
-        char[] snapshot = board(' ', 'O', ' ', ' ', 'O', ' ', ' ', 'O', ' ');
-        game.symbol = 'O';
-        assertEquals(State.OWIN, game.checkState(snapshot));
+    public void rateTerminalGivesMinusHundredWhenOpponentWonColumn() {
+        MatchEngine engine = seeded('O', grid("  O", "X O", "  O"));
+        assertEquals(-MatchEngine.SCORE_WIN, engine.rateTerminal(engine.grid, 'X'));
     }
 
     @Test
-    public void detectsDiagonalDraw() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'O', 'X', 'X', 'O', 'O', 'O', 'X', 'X');
-        game.symbol = 'X';
-        assertEquals(State.DRAW, game.checkState(snapshot));
+    public void rateTerminalIsZeroOnPackedStalemate() {
+        MatchEngine engine = seeded('X', grid("OXO", "XXO", "XOX"));
+        assertEquals(0, engine.rateTerminal(engine.grid, 'O'));
     }
 
     @Test
-    public void keepsPlayingWhenMovesRemain() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'O', 'X', ' ', 'O', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(State.PLAYING, game.checkState(snapshot));
+    public void rateTerminalStaysUnknownOnWideOpenGrid() {
+        MatchEngine engine = seeded('X', grid("X  ", "   ", "   "));
+        assertEquals(MatchEngine.UNKNOWN, engine.rateTerminal(engine.grid, 'O'));
     }
 
     @Test
-    public void listsOnlyOpenCells() {
-        Game game = new Game();
-        char[] snapshot = board('X', ' ', 'O', ' ', 'X', ' ', ' ', ' ', ' ');
-        ArrayList<Integer> open = new ArrayList<>();
-        game.collectEmptyCells(snapshot, open);
-        assertEquals(6, open.size());
-        assertFalse(open.contains(0));
-        assertFalse(open.contains(2));
-        assertFalse(open.contains(4));
-    }
-
-    @Test
-    public void emptyBoardListsAllCellIndexes() {
-        Game game = new Game();
-        ArrayList<Integer> open = new ArrayList<>();
-        game.collectEmptyCells(game.board, open);
-        assertEquals(9, open.size());
-        for (int i = 0; i < 9; i++) {
-            assertEquals(Integer.valueOf(i), open.get(i));
-        }
-    }
-
-    @Test
-    public void scoresWinningPositionForSamePlayer() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'X', 'X', ' ', 'O', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(Game.INF, game.scorePosition(snapshot, game.player1));
-    }
-
-    @Test
-    public void scoresLosingPositionForOpponent() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'X', 'X', ' ', ' ', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(-Game.INF, game.scorePosition(snapshot, game.player2));
-    }
-
-    @Test
-    public void scoresDrawAsZero() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'O', 'X', 'X', 'O', 'O', 'O', 'X', 'X');
-        game.symbol = 'X';
-        assertEquals(0, game.scorePosition(snapshot, game.player1));
-    }
-
-    @Test
-    public void scoresOpenPositionAsUnknown() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'O', ' ', ' ', ' ', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(-1, game.scorePosition(snapshot, game.player1));
-    }
-
-    @Test
-    public void aiReturnsLegalMoveInMidGame() {
-        Game game = new Game();
-        char[] snapshot = board('O', 'O', ' ', 'X', ' ', ' ', ' ', ' ', ' ');
-        game.player2.symbol = 'O';
-        int move = game.findBestMove(snapshot, game.player2);
+    public void cpuMoveIsLegalOnScatteredPosition() {
+        MatchEngine engine = new MatchEngine();
+        char[] snapshot = grid("X O", " OX", "X  ");
+        engine.lastPlaced = 'X';
+        int move = engine.pickComputerMove(snapshot, engine.noughts);
         assertTrue(move >= 1 && move <= 9);
     }
 
     @Test
-    public void aiChoosesMoveWhenOpponentThreatensRow() {
-        Game game = new Game();
-        char[] snapshot = board('O', 'O', ' ', ' ', 'X', ' ', ' ', ' ', ' ');
-        game.player2.symbol = 'O';
-        int move = game.findBestMove(snapshot, game.player2);
-        assertTrue(move >= 1 && move <= 9);
+    public void cpuReplyKeepsCrossesFromInstantWin() {
+        MatchEngine engine = new MatchEngine();
+        char[] snapshot = grid("   ", "   ", "XX ");
+        engine.lastPlaced = 'X';
+        int move = engine.pickComputerMove(snapshot, engine.noughts);
+        snapshot[move - 1] = 'O';
+        engine.lastPlaced = 'O';
+        assertEquals(MatchOutcome.IN_PROGRESS, engine.resolveOutcome(snapshot));
     }
 
     @Test
-    public void aiPicksLastFreeCell() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'O', 'X', 'X', 'O', 'O', 'O', 'X', ' ');
-        game.player2.symbol = 'O';
-        assertEquals(9, game.findBestMove(snapshot, game.player2));
+    public void cpuTakesCenterWhenItIsOnlyHole() {
+        MatchEngine engine = new MatchEngine();
+        char[] snapshot = grid("OXO", "X X", "OXO");
+        engine.lastPlaced = 'X';
+        assertEquals(5, engine.pickComputerMove(snapshot, engine.noughts));
     }
 
     @Test
-    public void minTurnReturnsLossOnTerminalBoard() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'X', 'X', ' ', 'O', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(-Game.INF, game.minTurn(snapshot, game.player2));
+    public void cpuCompletesTopRowWhenTwoNoughtsReady() {
+        MatchEngine engine = new MatchEngine();
+        char[] snapshot = grid("OO ", "XX ", "   ");
+        engine.lastPlaced = 'X';
+        assertEquals(3, engine.pickComputerMove(snapshot, engine.noughts));
     }
 
     @Test
-    public void maxTurnReturnsWinOnTerminalBoard() {
-        Game game = new Game();
-        char[] snapshot = board('X', 'X', 'X', ' ', 'O', ' ', ' ', ' ', ' ');
-        game.symbol = 'X';
-        assertEquals(Game.INF, game.maxTurn(snapshot, game.player1));
-    }
-
-    @Test
-    public void utilityCanPrintBoardSnapshots() {
-        Utility.dumpBoard(board('X', 'O', ' ', ' ', 'X', ' ', ' ', ' ', ' '));
-        Utility.dumpBoard(new int[] {0, 1, 2, 3, 4, 5, 6, 7, 8});
-        ArrayList<Integer> moves = new ArrayList<>();
-        moves.add(1);
-        moves.add(4);
-        Utility.dumpMoves(moves);
+    public void logHelperAcceptsAlternateTracePayloads() {
+        LogHelper.traceGrid(grid(" OX", "X  ", "  X"));
+        LogHelper.traceGrid(new int[] {4, 3, 2, 1, 0});
+        LogHelper.traceIndexList(Arrays.asList(1, 3, 7));
         assertTrue(true);
     }
 
     @Test
-    public void cellStoresCoordinatesAndMarker() {
-        TicTacToeCell cell = new TicTacToeCell(4, 1, 2);
-        assertEquals(4, cell.getNum());
-        assertEquals(1, cell.getCol());
-        assertEquals(2, cell.getRow());
-        assertEquals(' ', cell.getMarker());
-        cell.setMarker("O");
-        assertEquals('O', cell.getMarker());
-        assertFalse(cell.isEnabled());
+    public void squareButtonExposesFlatIndexAndCoordinates() {
+        SquareButton square = new SquareButton(8, 2, 2);
+        assertEquals(8, square.flatIndex());
+        assertEquals(2, square.column());
+        assertEquals(2, square.rowIndex());
+        assertEquals(' ', square.occupiedBy());
     }
 
     @Test
-    public void markingCrossDisablesCell() {
-        TicTacToeCell cell = new TicTacToeCell(1, 0, 0);
-        assertTrue(cell.isEnabled());
-        cell.setMarker("X");
-        assertEquals('X', cell.getMarker());
-        assertFalse(cell.isEnabled());
+    public void squareButtonLocksAfterCrossPlayed() {
+        SquareButton square = new SquareButton(3, 0, 1);
+        square.placeMark('X');
+        assertEquals('X', square.occupiedBy());
+        assertFalse(square.isEnabled());
     }
 
     @Test(timeout = 5000)
-    public void aiMoveIsValidOnEmptyBoard() {
-        Game game = new Game();
-        int move = game.findBestMove(game.board, game.player2);
+    public void cpuReturnsInRangeOnBrandNewGrid() {
+        MatchEngine engine = new MatchEngine();
+        engine.lastPlaced = ' ';
+        int move = engine.pickComputerMove(engine.grid, engine.noughts);
         assertTrue(move >= 1 && move <= 9);
     }
 
     @Test
-    public void panelUpdatesBoardAfterClick() throws Exception {
-        TicTacToePanel panel = new TicTacToePanel(new GridLayout(3, 3));
+    public void cornerClickStartsHumanAndCpuReplies() throws Exception {
+        BoardView view = new BoardView(new GridLayout(3, 3));
 
-        Field cellsField = TicTacToePanel.class.getDeclaredField("cells");
-        cellsField.setAccessible(true);
-        TicTacToeCell[] cells = (TicTacToeCell[]) cellsField.get(panel);
-        cells[4].doClick();
+        Field squaresField = BoardView.class.getDeclaredField("squares");
+        squaresField.setAccessible(true);
+        SquareButton[] squares = (SquareButton[]) squaresField.get(view);
+        squares[0].doClick();
 
-        Field gameField = TicTacToePanel.class.getDeclaredField("game");
-        gameField.setAccessible(true);
-        Game game = (Game) gameField.get(panel);
+        Field engineField = BoardView.class.getDeclaredField("engine");
+        engineField.setAccessible(true);
+        MatchEngine engine = (MatchEngine) engineField.get(view);
 
-        int occupied = 0;
-        for (char cell : game.board) {
+        assertEquals('X', engine.grid[0]);
+        int filled = 0;
+        for (char cell : engine.grid) {
             if (cell != ' ') {
-                occupied++;
+                filled++;
             }
         }
-        assertTrue(occupied >= 2);
-        assertEquals(State.PLAYING, game.state);
+        assertEquals(2, filled);
+        assertEquals(MatchOutcome.IN_PROGRESS, engine.outcome);
     }
 }

@@ -6,333 +6,309 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 
-enum State {
-    PLAYING,
-    OWIN,
-    XWIN,
-    DRAW
+enum MatchOutcome {
+    IN_PROGRESS,
+    NOUGHTS_WIN,
+    CROSSES_WIN,
+    STALEMATE
 }
 
-class Player {
-    char symbol;
-    int move;
+class Participant {
+    final char mark;
+    int chosenCell;
+
+    Participant(char mark) {
+        this.mark = mark;
+        chosenCell = -1;
+    }
 }
 
-class Game {
-    static final int INF = 100;
+class MatchEngine {
+    static final int SCORE_WIN = 100;
+    static final int UNKNOWN = -1;
+    private static final int[][] WIN_LINES = {
+        {0, 1, 2}, {3, 4, 5}, {6, 7, 8},
+        {0, 3, 6}, {1, 4, 7}, {2, 5, 8},
+        {0, 4, 8}, {2, 4, 6}
+    };
 
-    State state;
-    Player player1;
-    Player player2;
-    Player cplayer;
-    int nmove;
-    char symbol;
-    int q;
-    char[] board;
+    MatchOutcome outcome;
+    final Participant crosses;
+    final Participant noughts;
+    Participant turnHolder;
+    char lastPlaced;
+    char[] grid;
 
-    Game() {
-        player1 = new Player();
-        player2 = new Player();
-        player1.symbol = 'X';
-        player2.symbol = 'O';
-        state = State.PLAYING;
-        board = new char[9];
-        resetBoard();
+    MatchEngine() {
+        crosses = new Participant('X');
+        noughts = new Participant('O');
+        outcome = MatchOutcome.IN_PROGRESS;
+        grid = new char[9];
+        clearGrid();
     }
 
-    void resetBoard() {
-        for (int i = 0; i < board.length; i++) {
-            board[i] = ' ';
+    void clearGrid() {
+        for (int i = 0; i < grid.length; i++) {
+            grid[i] = ' ';
         }
     }
 
-    State checkState(char[] boardSnapshot) {
-        State result = State.PLAYING;
-        if (hasLine(boardSnapshot, symbol)) {
-            result = symbol == 'X' ? State.XWIN : State.OWIN;
-        } else {
-            result = State.DRAW;
-            for (char cell : boardSnapshot) {
-                if (cell == ' ') {
-                    result = State.PLAYING;
-                    break;
-                }
+    MatchOutcome resolveOutcome(char[] snapshot) {
+        if (isTriple(snapshot, lastPlaced)) {
+            return lastPlaced == 'X' ? MatchOutcome.CROSSES_WIN : MatchOutcome.NOUGHTS_WIN;
+        }
+        for (char cell : snapshot) {
+            if (cell == ' ') {
+                return MatchOutcome.IN_PROGRESS;
             }
         }
-        return result;
+        return MatchOutcome.STALEMATE;
     }
 
-    private boolean hasLine(char[] boardSnapshot, char mark) {
-        int[][] lines = {
-            {0, 1, 2}, {3, 4, 5}, {6, 7, 8},
-            {0, 3, 6}, {1, 4, 7}, {2, 5, 8},
-            {0, 4, 8}, {2, 4, 6}
-        };
-        for (int[] line : lines) {
-            if (boardSnapshot[line[0]] == mark
-                    && boardSnapshot[line[1]] == mark
-                    && boardSnapshot[line[2]] == mark) {
+    private boolean isTriple(char[] snapshot, char mark) {
+        for (int[] line : WIN_LINES) {
+            if (snapshot[line[0]] == mark
+                    && snapshot[line[1]] == mark
+                    && snapshot[line[2]] == mark) {
                 return true;
             }
         }
         return false;
     }
 
-    void collectEmptyCells(char[] boardSnapshot, ArrayList<Integer> emptyCells) {
-        for (int i = 0; i < boardSnapshot.length; i++) {
-            if (boardSnapshot[i] == ' ') {
-                emptyCells.add(i);
+    List<Integer> vacantIndices(char[] snapshot) {
+        List<Integer> free = new ArrayList<>();
+        for (int i = 0; i < snapshot.length; i++) {
+            if (snapshot[i] == ' ') {
+                free.add(i);
             }
         }
+        return free;
     }
 
-    int scorePosition(char[] boardSnapshot, Player forPlayer) {
-        State positionState = checkState(boardSnapshot);
-        if (positionState == State.XWIN || positionState == State.OWIN || positionState == State.DRAW) {
-            if ((positionState == State.XWIN && forPlayer.symbol == 'X')
-                    || (positionState == State.OWIN && forPlayer.symbol == 'O')) {
-                return INF;
-            }
-            if ((positionState == State.XWIN && forPlayer.symbol == 'O')
-                    || (positionState == State.OWIN && forPlayer.symbol == 'X')) {
-                return -INF;
-            }
-            if (positionState == State.DRAW) {
+    int rateTerminal(char[] snapshot, char forMark) {
+        MatchOutcome end = resolveOutcome(snapshot);
+        switch (end) {
+            case CROSSES_WIN:
+                return forMark == 'X' ? SCORE_WIN : -SCORE_WIN;
+            case NOUGHTS_WIN:
+                return forMark == 'O' ? SCORE_WIN : -SCORE_WIN;
+            case STALEMATE:
                 return 0;
-            }
+            default:
+                return UNKNOWN;
         }
-        return -1;
     }
 
-    int findBestMove(char[] boardSnapshot, Player aiPlayer) {
-        int bestScore = -INF;
-        int tieBreakerIndex = 0;
-        ArrayList<Integer> candidates = new ArrayList<>();
-        int[] equallyGood = new int[9];
+    int pickComputerMove(char[] snapshot, Participant cpu) {
+        List<Integer> options = vacantIndices(snapshot);
+        int peak = Integer.MIN_VALUE;
+        List<Integer> tiedMoves = new ArrayList<>();
 
-        collectEmptyCells(boardSnapshot, candidates);
-        while (!candidates.isEmpty()) {
-            int cell = candidates.remove(0);
-            boardSnapshot[cell] = aiPlayer.symbol;
-            symbol = aiPlayer.symbol;
-
-            int score = minTurn(boardSnapshot, aiPlayer);
-            if (score > bestScore) {
-                bestScore = score;
-                tieBreakerIndex = 0;
-                equallyGood[tieBreakerIndex] = cell + 1;
-            } else if (score == bestScore) {
-                equallyGood[++tieBreakerIndex] = cell + 1;
+        for (int index : options) {
+            snapshot[index] = cpu.mark;
+            lastPlaced = cpu.mark;
+            int value = rateTerminal(snapshot, cpu.mark);
+            if (value == UNKNOWN) {
+                value = -negamax(snapshot, flipMark(cpu.mark), cpu.mark);
             }
+            snapshot[index] = ' ';
 
-            boardSnapshot[cell] = ' ';
+            int humanIndex = index + 1;
+            if (value > peak) {
+                peak = value;
+                tiedMoves.clear();
+                tiedMoves.add(humanIndex);
+            } else if (value == peak) {
+                tiedMoves.add(humanIndex);
+            }
         }
 
-        if (tieBreakerIndex > 0) {
-            tieBreakerIndex = new Random().nextInt(tieBreakerIndex + 1);
-        }
-        q = 0;
-        return equallyGood[tieBreakerIndex];
+        return tiedMoves.get(new Random().nextInt(tiedMoves.size()));
     }
 
-    int minTurn(char[] boardSnapshot, Player aiPlayer) {
-        int terminal = scorePosition(boardSnapshot, aiPlayer);
-        if (terminal != -1) {
-            return terminal;
-        }
-        q++;
-
-        int bestScore = INF;
-        ArrayList<Integer> candidates = new ArrayList<>();
-        collectEmptyCells(boardSnapshot, candidates);
-
-        while (!candidates.isEmpty()) {
-            int cell = candidates.remove(0);
-            symbol = aiPlayer.symbol == 'X' ? 'O' : 'X';
-            boardSnapshot[cell] = symbol;
-
-            int score = maxTurn(boardSnapshot, aiPlayer);
-            if (score < bestScore) {
-                bestScore = score;
-            }
-
-            boardSnapshot[cell] = ' ';
-        }
-        return bestScore;
+    private char flipMark(char mark) {
+        return mark == 'X' ? 'O' : 'X';
     }
 
-    int maxTurn(char[] boardSnapshot, Player aiPlayer) {
-        int terminal = scorePosition(boardSnapshot, aiPlayer);
-        if (terminal != -1) {
-            return terminal;
+    private int negamax(char[] snapshot, char sideToMove, char viewpoint) {
+        int leaf = rateTerminal(snapshot, viewpoint);
+        if (leaf != UNKNOWN) {
+            return leaf;
         }
-        q++;
 
-        int bestScore = -INF;
-        ArrayList<Integer> candidates = new ArrayList<>();
-        collectEmptyCells(boardSnapshot, candidates);
-
-        while (!candidates.isEmpty()) {
-            int cell = candidates.remove(0);
-            symbol = aiPlayer.symbol;
-            boardSnapshot[cell] = symbol;
-
-            int score = minTurn(boardSnapshot, aiPlayer);
-            if (score > bestScore) {
-                bestScore = score;
+        int best = Integer.MIN_VALUE + 1;
+        for (int index : vacantIndices(snapshot)) {
+            snapshot[index] = sideToMove;
+            lastPlaced = sideToMove;
+            int score = -negamax(snapshot, flipMark(sideToMove), viewpoint);
+            snapshot[index] = ' ';
+            if (score > best) {
+                best = score;
             }
-
-            boardSnapshot[cell] = ' ';
         }
-        return bestScore;
+        return best;
     }
 }
 
 public class Program {
     public static void main(String[] args) throws IOException {
-        JFrame frame = new JFrame("Крестики-нолики");
-        frame.add(new TicTacToePanel(new GridLayout(3, 3)));
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setBounds(100, 100, 480, 520);
-        frame.setVisible(true);
+        JFrame window = new JFrame("Человек (X) — компьютер (O)");
+        window.add(new BoardView(new GridLayout(3, 3)));
+        window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        window.setBounds(120, 80, 460, 500);
+        window.setVisible(true);
     }
 }
 
-class TicTacToeCell extends JButton {
-    private final int num;
-    private final int row;
-    private final int col;
-    private char marker;
+class SquareButton extends JButton {
+    private final int flatIndex;
+    private final int column;
+    private final int rowIndex;
+    private char occupiedBy;
 
-    TicTacToeCell(int num, int x, int y) {
-        this.num = num;
-        row = y;
-        col = x;
-        marker = ' ';
-        setText(" ");
-        setFont(new Font("Segoe UI", Font.BOLD, 36));
+    SquareButton(int flatIndex, int column, int rowIndex) {
+        this.flatIndex = flatIndex;
+        this.column = column;
+        this.rowIndex = rowIndex;
+        occupiedBy = ' ';
+        setText("\u00a0");
+        setFont(new Font("Dialog", Font.BOLD, 32));
     }
 
-    void setMarker(String markerText) {
-        marker = markerText.charAt(0);
-        setText(markerText);
+    void placeMark(char mark) {
+        occupiedBy = mark;
+        setText(String.valueOf(mark));
         setEnabled(false);
     }
 
-    char getMarker() {
-        return marker;
+    char occupiedBy() {
+        return occupiedBy;
     }
 
-    int getRow() {
-        return row;
+    int column() {
+        return column;
     }
 
-    int getCol() {
-        return col;
+    int rowIndex() {
+        return rowIndex;
     }
 
-    int getNum() {
-        return num;
+    int flatIndex() {
+        return flatIndex;
     }
 }
 
-class Utility {
-    private Utility() {
+class LogHelper {
+    private LogHelper() {
     }
 
-    static void dumpBoard(char[] board) {
-        System.out.println();
-        for (char cell : board) {
-            System.out.print(cell + "|");
+    static void traceGrid(char[] cells) {
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < cells.length; i++) {
+            line.append(cells[i]).append(' ');
         }
-        System.out.println();
+        System.out.println(line.toString().trim());
     }
 
-    static void dumpBoard(int[] values) {
-        System.out.println();
+    static void traceGrid(int[] values) {
+        StringBuilder line = new StringBuilder();
         for (int value : values) {
-            System.out.print(value + "|");
+            line.append(value).append(' ');
         }
-        System.out.println();
+        System.out.println(line.toString().trim());
     }
 
-    static void dumpMoves(ArrayList<Integer> moves) {
-        System.out.println();
-        for (Integer move : moves) {
-            System.out.print(move + "|");
+    static void traceIndexList(List<Integer> indexes) {
+        StringBuilder line = new StringBuilder();
+        for (Integer index : indexes) {
+            line.append(index).append(' ');
         }
-        System.out.println();
+        System.out.println(line.toString().trim());
     }
 }
 
-class TicTacToePanel extends JPanel implements ActionListener {
-    private final Game game;
-    private final TicTacToeCell[] cells = new TicTacToeCell[9];
+class BoardView extends JPanel implements ActionListener {
+    private final MatchEngine engine;
+    private final SquareButton[] squares = new SquareButton[9];
 
-    TicTacToePanel(GridLayout layout) {
+    BoardView(GridLayout layout) {
         super(layout);
-        addCell(0, 0, 0);
-        addCell(1, 1, 0);
-        addCell(2, 2, 0);
-        addCell(3, 0, 1);
-        addCell(4, 1, 1);
-        addCell(5, 2, 1);
-        addCell(6, 0, 2);
-        addCell(7, 1, 2);
-        addCell(8, 2, 2);
-        game = new Game();
-        game.cplayer = game.player1;
+        engine = new MatchEngine();
+        engine.turnHolder = engine.crosses;
+        for (int i = 0; i < 9; i++) {
+            int col = i % 3;
+            int row = i / 3;
+            squares[i] = new SquareButton(i, col, row);
+            squares[i].addActionListener(this);
+            add(squares[i]);
+        }
     }
 
-    private void addCell(int num, int x, int y) {
-        cells[num] = new TicTacToeCell(num, x, y);
-        cells[num].addActionListener(this);
-        add(cells[num]);
+    private void syncGridFromButtons() {
+        for (int i = 0; i < squares.length; i++) {
+            engine.grid[i] = squares[i].occupiedBy();
+        }
     }
 
     @Override
     public void actionPerformed(ActionEvent event) {
-        game.player1.move = -1;
-        game.player2.move = -1;
+        engine.crosses.chosenCell = -1;
+        engine.noughts.chosenCell = -1;
 
-        int index = 0;
-        for (TicTacToeCell cell : cells) {
-            if (event.getSource() == cell) {
-                cell.setMarker(String.valueOf(game.cplayer.symbol));
+        for (SquareButton square : squares) {
+            if (event.getSource() == square) {
+                square.placeMark(engine.turnHolder.mark);
             }
-            game.board[index++] = cell.getMarker();
         }
+        syncGridFromButtons();
 
-        if (game.cplayer == game.player1) {
-            game.player2.move = game.findBestMove(game.board, game.player2);
-            game.nmove = game.player2.move;
-            game.symbol = game.player2.symbol;
-            game.cplayer = game.player2;
-            if (game.player2.move > 0) {
-                cells[game.player2.move - 1].doClick();
-            }
+        if (engine.turnHolder == engine.crosses) {
+            runComputerTurn();
         } else {
-            game.nmove = game.player1.move;
-            game.symbol = game.player1.symbol;
-            game.cplayer = game.player1;
+            engine.turnHolder = engine.crosses;
+            engine.lastPlaced = engine.crosses.mark;
         }
 
-        game.state = game.checkState(game.board);
-        if (game.state == State.XWIN) {
-            JOptionPane.showMessageDialog(this, "Победа X", "Игра окончена", JOptionPane.INFORMATION_MESSAGE);
-            System.exit(0);
-        } else if (game.state == State.OWIN) {
-            JOptionPane.showMessageDialog(this, "Победа O", "Игра окончена", JOptionPane.INFORMATION_MESSAGE);
-            System.exit(0);
-        } else if (game.state == State.DRAW) {
-            JOptionPane.showMessageDialog(this, "Ничья", "Игра окончена", JOptionPane.INFORMATION_MESSAGE);
-            System.exit(0);
+        engine.outcome = engine.resolveOutcome(engine.grid);
+        finishIfNeeded();
+    }
+
+    private void runComputerTurn() {
+        engine.noughts.chosenCell = engine.pickComputerMove(engine.grid, engine.noughts);
+        engine.lastPlaced = engine.noughts.mark;
+        engine.turnHolder = engine.noughts;
+        if (engine.noughts.chosenCell > 0) {
+            squares[engine.noughts.chosenCell - 1].doClick();
+        }
+    }
+
+    private void finishIfNeeded() {
+        switch (engine.outcome) {
+            case CROSSES_WIN:
+                JOptionPane.showMessageDialog(
+                        this, "Выиграли крестики (X)", "Конец партии", JOptionPane.INFORMATION_MESSAGE);
+                System.exit(0);
+                break;
+            case NOUGHTS_WIN:
+                JOptionPane.showMessageDialog(
+                        this, "Выиграли нолики (O)", "Конец партии", JOptionPane.INFORMATION_MESSAGE);
+                System.exit(0);
+                break;
+            case STALEMATE:
+                JOptionPane.showMessageDialog(
+                        this, "Свободных клеток нет — ничья", "Конец партии", JOptionPane.INFORMATION_MESSAGE);
+                System.exit(0);
+                break;
+            default:
+                break;
         }
     }
 }
